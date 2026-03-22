@@ -1,0 +1,10 @@
+[package]
+name = "px4-harness"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+px4-harness-core = { path = "../px4-harness-core"} # Dependency on the core library crate
+anyhow = "1.0" # For error handling
+clap = { version = "4.0", features = ["derive"] } # For command-line argument parsing
+tokio = { version = "1.0", features = ["full"] } # For async runtime

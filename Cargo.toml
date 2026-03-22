@@ -1,0 +1,12 @@
+[workspace]
+# `resolver = "2"` uses Rust's newer dependency resolution algorithm,
+# which handles feature flags more correctly. It's the default for
+# edition 2021+, but we're explicit here.
+resolver = "2"
+
+# These are the crates in our workspace. Cargo will build them together
+# and they share one Cargo.lock file.
+members = [
+    "crates/px4-harness",      # binary crate — the CLI you run
+    "crates/px4-harness-core", # library crate — all the core logic
+]

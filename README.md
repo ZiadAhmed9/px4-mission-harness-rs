@@ -57,9 +57,9 @@ timeout_secs = 120
 **Early development** — building the foundation incrementally:
 
 - [x] Project scaffolding (Cargo workspace, CLI skeleton)
-- [ ] Scenario parsing (TOML format, validation, error handling)
-- [ ] MAVLink connection (heartbeat, basic communication with PX4 SITL)
-- [ ] Mission controller (arm, takeoff, waypoints, land)
+- [x] Scenario parsing (TOML format, validation, error handling)
+- [x] MAVLink connection (heartbeat, basic communication with PX4 SITL)
+- [x] Mission controller (arm, takeoff, waypoints, land)
 - [ ] Telemetry collection (position, attitude, vehicle status)
 - [ ] Assertion engine (waypoint reached, altitude, landing checks)
 - [ ] UDP proxy with fault injection (delay, drop, duplicate, jitter, replay)

@@ -1,5 +1,8 @@
+use std::sync::Arc;
+
 use mavlink::ardupilotmega::MavMessage;
 use mavlink::{MavConnection, MavHeader};
+use tokio::sync::mpsc;
 
 use crate::error::HarnessError;
 
@@ -34,6 +37,26 @@ impl MavlinkConnection {
             .map_err(|e| HarnessError::MavlinkReceive {
                 source: e,
             })
+    }
+
+    /// Spawn a background task that receives messages and sends them through a channel.
+    /// Takes Arc<Self> so the connection can still be used for sending.
+    pub fn start_recv_task(
+        self: &Arc<Self>,
+    ) -> mpsc::UnboundedReceiver<Result<(MavHeader, MavMessage), HarnessError>> {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let conn = Arc::clone(self);
+
+        tokio::task::spawn_blocking(move || {
+            loop {
+                let result = conn.recv();
+                if tx.send(result).is_err() {
+                    break; // receiver dropped, stop
+                }
+            }
+        });
+
+        rx
     }
 
     /// Send a MAVLink message to PX4.

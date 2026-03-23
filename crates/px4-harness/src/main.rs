@@ -1,9 +1,11 @@
 use anyhow::{Context, Result}; //import anyhow
 use clap::Parser; //import clap for command-line argument parsing
-use mavlink::ardupilotmega::MavMessage; // MAVLink message enum (HEARTBEAT, etc.)
 use px4_harness_core::mavlink::connection::MavlinkConnection; // our MAVLink connection wrapper
 use px4_harness_core::scenario::ScenarioFile;
 use std::path::PathBuf; //import PathBuf for handling file paths
+
+use std::sync::Arc;
+use px4_harness_core::mission::controller::MissionController;
 
 /// PX4 Mission Harness: A tool for testing the resilience of PX4 missions.
 #[derive(Parser)] // Derive the Parser trait from clap to enable command-line argument parsing
@@ -28,33 +30,15 @@ async fn main() -> Result<()> {
     println!("  Assertions: {}", scenario.assertions.len());
 
     println!("Connecting to PX4 SITL...");
-    let conn = MavlinkConnection::connect("udpin:0.0.0.0:14540")?;
-    println!("Connected. Waiting for heartbeats...");
+    // Single connection, shared via Arc for both sending and receiving
+    let conn = Arc::new(MavlinkConnection::connect("udpin:0.0.0.0:14540")?);
 
-    loop {
-        match conn.recv() {
-            Ok((header, MavMessage::HEARTBEAT(heartbeat))) => {
-                println!(
-                    "HEARTBEAT from system {} component {}: type={}, autopilot={}, mode={}",
-                    header.system_id,
-                    header.component_id,
-                    heartbeat.mavtype as u8,
-                    heartbeat.autopilot as u8,
-                    heartbeat.custom_mode,
-                );
-            }
-            Ok((header, msg)) => {
-                // Print a summary of non-heartbeat messages
-                println!(
-                    "Message from system {} component {}: {:?}",
-                    header.system_id,
-                    header.component_id,
-                    std::mem::discriminant(&msg),
-                );
-            }
-            Err(e) => {
-                eprintln!("Error receiving message: {}", e);
-            }
-        }
-    }
+    // Start receiving messages in background (uses Arc::clone internally)
+    let rx = conn.start_recv_task();
+
+    // Create mission controller and run
+    let controller = MissionController::new(Arc::clone(&conn));
+    controller.run_mission(&scenario.mission, rx).await?;
+
+    Ok(())
 }

@@ -1,0 +1,36 @@
+[scenario]
+name = "Simple waypoint mission with mild packet loss"
+description = "FLy to one way point and land, with 10% packet loss"
+
+[mission]
+takeoff_altitude = 10.0 # in meters
+
+
+[[mission.waypoints]] #double brackets indicate an array of waypoints
+latitude = 47.397742
+longitude = 8.545594
+altitude = 10.0
+acceptance_radius = 5.0   # meters — how close counts as "reached"
+
+[faults]
+delay_ms = 0              # fixed delay added to each packet (milliseconds)
+jitter_ms = 0             # random variation added on top of delay
+loss_rate = 0.1           # probability of dropping a packet (0.0 to 1.0)
+burst_loss_length = 0     # number of consecutive packets to drop in a burst
+duplicate_rate = 0.0      # probability of sending a packet twice
+replay_stale_ms = 0       # resend a packet from N ms ago (0 = disabled)
+
+
+[[assertions]]
+type = "waypoint_reached"
+waypoint_index = 0
+timeout_secs = 60
+
+[[assertions]]
+type = "waypoint_reached"
+waypoint_index = 1
+timeout_secs = 60
+
+[[assertions]]
+type = "landed"
+timeout_secs = 120

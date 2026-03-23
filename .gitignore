@@ -16,3 +16,5 @@ Thumbs.db
 
 # Documentation (kept locally, not tracked)
 Documentation/
+CLAUDE.md
+.claude/settings.json

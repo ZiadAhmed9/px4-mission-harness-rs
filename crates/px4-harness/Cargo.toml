@@ -8,3 +8,4 @@ px4-harness-core = { path = "../px4-harness-core"} # Dependency on the core libr
 anyhow = "1.0" # For error handling
 clap = { version = "4.0", features = ["derive"] } # For command-line argument parsing
 tokio = { version = "1.0", features = ["full"] } # For async runtime
+mavlink = { version = "0.14", features = ["ardupilotmega", "udp"] } # For MavMessage type used in pattern matching

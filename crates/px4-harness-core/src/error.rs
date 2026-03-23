@@ -17,4 +17,23 @@ pub enum HarnessError {
     #[error("scenario validation failed: {reason}")]
     // Define an error variant for scenario validation failures, with a message that includes the reason for failure
     ScenarioValidation { reason: String }, // The reason why the scenario validation failed
+
+    #[error("failed to connect to MAVLink at {address}")]
+    MavlinkConnection {
+        address: String,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[error("failed to receive MAVLink message")]
+    MavlinkReceive {
+        #[source]
+        source: mavlink::error::MessageReadError,
+    },
+
+    #[error("failed to send MAVLink message")]
+    MavlinkSend {
+        #[source]
+        source: mavlink::error::MessageWriteError,
+    },
 }

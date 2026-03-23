@@ -8,6 +8,7 @@ tokio = {version = "1", features = ["full"]} # Async runtime for Rust
 serde = {version = "1", features = ["derive"]} # Serialization/deserialization library
 toml = "0.5" # Library for parsing TOML files
 thiserror = "2" # Library for defining error types
+mavlink = { version = "0.14", features = ["ardupilotmega", "udp"] }
 
 [features] # Optional features that can be enabled when building the crate
 default = [] # No features enabled by default

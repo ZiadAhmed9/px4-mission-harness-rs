@@ -5,6 +5,7 @@ pub mod error;
 pub mod mavlink;
 pub mod mission;
 pub mod scenario;
+pub mod telemetry;
 
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")

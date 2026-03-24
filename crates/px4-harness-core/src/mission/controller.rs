@@ -1,12 +1,16 @@
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
 
 use ::mavlink::ardupilotmega::*;
 use ::mavlink::MavHeader;
 use tokio::sync::mpsc;
-use tokio::time::{Duration, sleep, timeout};
+use tokio::time::{sleep, timeout, Duration};
 
 use crate::error::HarnessError;
 use crate::mavlink::connection::MavlinkConnection;
+
+use crate::telemetry::processor::start_telemetry_processor;
+use crate::telemetry::store::{LandedState, TelemetryStore};
 
 pub struct MissionController {
     connection: Arc<MavlinkConnection>,
@@ -24,11 +28,7 @@ impl MissionController {
     }
 
     /// Send a COMMAND_LONG and return immediately (no ACK wait).
-    fn send_command(
-        &self,
-        command: MavCmd,
-        params: [f32; 7],
-    ) -> Result<(), HarnessError> {
+    fn send_command(&self, command: MavCmd, params: [f32; 7]) -> Result<(), HarnessError> {
         let msg = MavMessage::COMMAND_LONG(COMMAND_LONG_DATA {
             target_system: self.target_system,
             target_component: self.target_component,
@@ -199,12 +199,15 @@ impl MissionController {
         rx: &mut mpsc::UnboundedReceiver<Result<(MavHeader, MavMessage), HarnessError>>,
     ) -> Result<(), HarnessError> {
         println!("Setting offboard mode...");
-        // MAV_CMD_DO_SET_MODE: param1 = base mode (1 = CUSTOM), param2 = custom mode
-        // PX4 offboard custom mode = 6 << 16 = 393216
-        let custom_mode = (6_u32 << 16) as f32;
+        // PX4 uses COMMAND_LONG with MAV_CMD_DO_SET_MODE.
+        // param1 = base_mode with MAV_MODE_FLAG_CUSTOM_MODE_ENABLED (1)
+        // param2 = PX4 custom main mode (6 = OFFBOARD)
+        // param3 = PX4 custom sub mode (0)
+        // Note: param2 is the main mode NUMBER (6), NOT shifted.
+        // PX4's commander handles the shifting internally for MAV_CMD_DO_SET_MODE.
         self.send_command(
             MavCmd::MAV_CMD_DO_SET_MODE,
-            [1.0, custom_mode, 0.0, 0.0, 0.0, 0.0, 0.0],
+            [1.0, 6.0, 0.0, 0.0, 0.0, 0.0, 0.0],
         )?;
 
         let result = self
@@ -229,26 +232,24 @@ impl MissionController {
         longitude: f64,
         altitude: f32,
     ) -> Result<(), HarnessError> {
-        let msg = MavMessage::SET_POSITION_TARGET_GLOBAL_INT(
-            SET_POSITION_TARGET_GLOBAL_INT_DATA {
-                time_boot_ms: 0,
-                target_system: self.target_system,
-                target_component: self.target_component,
-                coordinate_frame: MavFrame::MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
-                type_mask: PositionTargetTypemask::DEFAULT,
-                lat_int: (latitude * 1e7) as i32,
-                lon_int: (longitude * 1e7) as i32,
-                alt: altitude,
-                vx: 0.0,
-                vy: 0.0,
-                vz: 0.0,
-                afx: 0.0,
-                afy: 0.0,
-                afz: 0.0,
-                yaw: 0.0,
-                yaw_rate: 0.0,
-            },
-        );
+        let msg = MavMessage::SET_POSITION_TARGET_GLOBAL_INT(SET_POSITION_TARGET_GLOBAL_INT_DATA {
+            time_boot_ms: 0,
+            target_system: self.target_system,
+            target_component: self.target_component,
+            coordinate_frame: MavFrame::MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
+            type_mask: PositionTargetTypemask::from_bits_truncate(0b0000_0111_1111_1000),
+            lat_int: (latitude * 1e7) as i32,
+            lon_int: (longitude * 1e7) as i32,
+            alt: altitude,
+            vx: 0.0,
+            vy: 0.0,
+            vz: 0.0,
+            afx: 0.0,
+            afy: 0.0,
+            afz: 0.0,
+            yaw: 0.0,
+            yaw_rate: 0.0,
+        });
         self.connection.send(&msg)
     }
 
@@ -256,9 +257,27 @@ impl MissionController {
     pub async fn run_mission(
         &self,
         mission: &crate::scenario::Mission,
-        mut rx: mpsc::UnboundedReceiver<Result<(MavHeader, MavMessage), HarnessError>>,
-    ) -> Result<(), HarnessError> {
+        rx: mpsc::UnboundedReceiver<Result<(MavHeader, MavMessage), HarnessError>>,
+    ) -> Result<Arc<TelemetryStore>, HarnessError> {
+        let store = Arc::new(TelemetryStore::new());
         let altitude = mission.takeoff_altitude as f32;
+
+        // Insert telemetry processor between receiver and controller
+        let mut rx = start_telemetry_processor(rx, Arc::clone(&store));
+
+        // Optional: periodic telemetry logger
+        let debug_store = Arc::clone(&store);
+        let debug_handle = tokio::spawn(async move {
+            loop {
+                if let Some(pos) = debug_store.latest_position() {
+                    println!(
+                        "  [TELEM] pos=({:.6}, {:.6}) alt={:.1}m",
+                        pos.latitude, pos.longitude, pos.relative_alt
+                    );
+                }
+                sleep(Duration::from_secs(3)).await;
+            }
+        });
 
         // Step 0: Send GCS heartbeats so PX4 knows we're connected.
         // Without this, PX4 refuses to arm ("No connection to the GCS").
@@ -280,29 +299,52 @@ impl MissionController {
         });
         println!("Sending GCS heartbeats...");
 
-        // Step 1: Start sending setpoints BEFORE switching to offboard mode.
-        // PX4 requires active setpoint stream before it accepts offboard mode.
-        println!("Starting setpoint stream...");
-        let conn = self.connection.clone();
-        let first_wp = &mission.waypoints[0];
-        let lat = first_wp.latitude;
-        let lon = first_wp.longitude;
-        let alt = first_wp.altitude as f32;
+        // Step 1: Wait for PX4 to be ready and get current position for initial setpoint
+        self.wait_for_ready(&mut rx).await?;
 
-        // Spawn a task that sends setpoints at 2Hz
+        // Get the drone's current position to use as initial setpoint
+        // (we hold position until we're ready to move)
+        let initial_pos = loop {
+            if let Some(pos) = store.latest_position() {
+                break pos;
+            }
+            sleep(Duration::from_millis(100)).await;
+        };
+
+        // Shared target position — the setpoint task reads these atomically,
+        // and we update them as the mission progresses.
+        // Stored as degE7 (i32) and mm (i32) to use AtomicI32.
+        let target_lat = Arc::new(AtomicI32::new((initial_pos.latitude * 1e7) as i32));
+        let target_lon = Arc::new(AtomicI32::new((initial_pos.longitude * 1e7) as i32));
+        let target_alt = Arc::new(AtomicI32::new(0)); // 0m relative alt — stay on ground initially
+
+        // Start sending setpoints at 2Hz BEFORE switching to offboard mode.
+        // PX4 requires an active setpoint stream before it accepts offboard mode.
+        println!("Starting setpoint stream...");
         let setpoint_handle = tokio::spawn({
-            let conn = conn.clone();
+            let conn = self.connection.clone();
+            let t_lat = Arc::clone(&target_lat);
+            let t_lon = Arc::clone(&target_lon);
+            let t_alt = Arc::clone(&target_alt);
             async move {
                 loop {
+                    let lat = t_lat.load(Ordering::Relaxed);
+                    let lon = t_lon.load(Ordering::Relaxed);
+                    let alt = t_alt.load(Ordering::Relaxed) as f32 / 1000.0; // mm -> m
                     let _ = conn.send(&MavMessage::SET_POSITION_TARGET_GLOBAL_INT(
                         SET_POSITION_TARGET_GLOBAL_INT_DATA {
                             time_boot_ms: 0,
                             target_system: 1,
                             target_component: 1,
                             coordinate_frame: MavFrame::MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
-                            type_mask: PositionTargetTypemask::DEFAULT,
-                            lat_int: (lat * 1e7) as i32,
-                            lon_int: (lon * 1e7) as i32,
+                            // type_mask: bits that are SET mean IGNORE that field.
+                            // We want PX4 to use lat, lon, alt (bits 0,1,2 = 0)
+                            // and ignore vx,vy,vz,ax,ay,az,yaw,yaw_rate (bits 3-10 = 1)
+                            type_mask: PositionTargetTypemask::from_bits_truncate(
+                                0b0000_0111_1111_1000
+                            ),
+                            lat_int: lat,
+                            lon_int: lon,
                             alt,
                             vx: 0.0, vy: 0.0, vz: 0.0,
                             afx: 0.0, afy: 0.0, afz: 0.0,
@@ -314,21 +356,36 @@ impl MissionController {
             }
         });
 
-        // Wait for PX4 to finish pre-flight checks (GPS lock, EKF, etc.)
-        self.wait_for_ready(&mut rx).await?;
+        // Give PX4 a moment to see the setpoint stream
+        sleep(Duration::from_secs(2)).await;
 
-        // Step 2: Arm first (PX4 may reject arming in offboard mode)
-        self.arm(&mut rx).await?;
-
-        // Step 3: Then switch to offboard mode
+        // Step 2: Switch to offboard mode FIRST (while disarmed, setpoints already streaming)
         self.set_mode_offboard(&mut rx).await?;
 
-        // Step 4: Takeoff
-        self.takeoff(altitude, &mut rx).await?;
+        // Step 3: Then arm (PX4 accepts arming in offboard mode)
+        self.arm(&mut rx).await?;
 
-        // Step 5: Wait for takeoff to complete
-        println!("Waiting for takeoff to complete...");
-        sleep(Duration::from_secs(10)).await;
+        // Step 4: Takeoff — in offboard mode, we just set the target altitude.
+        // MAV_CMD_NAV_TAKEOFF doesn't work in offboard mode.
+        println!("Taking off to {}m...", altitude);
+        target_alt.store((altitude * 1000.0) as i32, Ordering::Relaxed);
+
+        // Wait until telemetry confirms we're near the target altitude
+        let takeoff_ok = timeout(Duration::from_secs(30), async {
+            loop {
+                if let Some(pos) = store.latest_position() {
+                    if pos.relative_alt > (altitude as f64 - 1.0) {
+                        return;
+                    }
+                }
+                sleep(Duration::from_millis(500)).await;
+            }
+        }).await;
+
+        match takeoff_ok {
+            Ok(_) => println!("Takeoff complete (verified by telemetry)"),
+            Err(_) => println!("Takeoff altitude not reached within timeout"),
+        }
 
         // Step 6: Fly to each waypoint
         for (i, waypoint) in mission.waypoints.iter().enumerate() {
@@ -336,16 +393,35 @@ impl MissionController {
                 "Flying to waypoint {} ({}, {}, {}m)...",
                 i, waypoint.latitude, waypoint.longitude, waypoint.altitude
             );
-            self.send_position_setpoint(
-                waypoint.latitude,
-                waypoint.longitude,
-                waypoint.altitude as f32,
-            )?;
+            // Update the shared target — the setpoint task picks this up automatically
+            target_lat.store((waypoint.latitude * 1e7) as i32, Ordering::Relaxed);
+            target_lon.store((waypoint.longitude * 1e7) as i32, Ordering::Relaxed);
+            target_alt.store((waypoint.altitude * 1000.0) as i32, Ordering::Relaxed);
 
             // Wait for the drone to reach the waypoint
-            // (In Phase 5, we'll check telemetry for actual position)
-            sleep(Duration::from_secs(15)).await;
-            println!("Waypoint {} reached (assumed)", i);
+            // Wait until telemetry shows we're within acceptance_radius of the waypoint
+            let accepted = timeout(Duration::from_secs(60), async {
+                loop {
+                    if let Some(pos) = store.latest_position() {
+                        let distance = Self::haversine_distance(
+                            pos.latitude,
+                            pos.longitude,
+                            waypoint.latitude,
+                            waypoint.longitude,
+                        );
+                        if distance < waypoint.acceptance_radius {
+                            return;
+                        }
+                    }
+                    sleep(Duration::from_millis(500)).await;
+                }
+            })
+            .await;
+
+            match accepted {
+                Ok(_) => println!("Waypoint {} reached (verified by telemetry)", i),
+                Err(_) => println!("Waypoint {} not reached within timeout", i),
+            }
         }
 
         // Step 7: Land
@@ -353,7 +429,67 @@ impl MissionController {
         heartbeat_handle.abort(); // stop sending heartbeats
         self.land(&mut rx).await?;
 
+        // Step 8: Verify landing with telemetry
+        println!("Waiting for landing...");
+        let landed = timeout(Duration::from_secs(60), async {
+            loop {
+                if store.current_landed_state() == LandedState::OnGround {
+                    return;
+                }
+                sleep(Duration::from_millis(500)).await;
+            }
+        })
+        .await;
+
+        match landed {
+            Ok(_) => println!("Landing confirmed by telemetry"),
+            Err(_) => println!("Landing not confirmed within timeout"),
+        }
         println!("Mission complete");
-        Ok(())
+
+        debug_handle.abort();
+        Ok(store) // Return the telemetry store for assertions after the mission
+    }
+
+    pub fn haversine_distance(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
+        const R: f64 = 6_371_000.0; // Earth's radius in meters
+
+        let d_lat = (lat2 - lat1).to_radians();
+        let d_lon = (lon2 - lon1).to_radians();
+
+        let a = (d_lat / 2.0).sin().powi(2)
+            + lat1.to_radians().cos() * lat2.to_radians().cos() * (d_lon / 2.0).sin().powi(2);
+
+        let c = 2.0 * a.sqrt().asin();
+        R * c
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn haversine_same_point() {
+        let d = MissionController::haversine_distance(47.397742, 8.545594, 47.397742, 8.545594);
+        assert!(d < 0.01, "same point should be ~0m, got {}", d);
+    }
+
+    #[test]
+    fn haversine_known_distance() {
+        // Two points ~111m apart (0.001 degrees of latitude)
+        let d = MissionController::haversine_distance(47.397742, 8.545594, 47.398742, 8.545594);
+        assert!(
+            (d - 111.2).abs() < 1.0,
+            "expected ~111m, got {}",
+            d
+        );
+    }
+
+    #[test]
+    fn haversine_short_distance() {
+        // ~5m apart — typical acceptance radius check
+        let d = MissionController::haversine_distance(47.397742, 8.545594, 47.397787, 8.545594);
+        assert!(d > 3.0 && d < 7.0, "expected ~5m, got {}", d);
     }
 }

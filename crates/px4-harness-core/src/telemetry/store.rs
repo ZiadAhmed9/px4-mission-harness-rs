@@ -54,6 +54,12 @@ pub struct TelemetryStore {
     pub mission_start: Instant,
 }
 
+impl Default for TelemetryStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TelemetryStore {
     pub fn new() -> Self {
         Self {

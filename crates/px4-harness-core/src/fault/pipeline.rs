@@ -144,9 +144,7 @@ mod tests {
         let mut pipeline = FaultPipeline::new(no_fault_profile());
         let actions = pipeline.process(b"test packet");
         assert_eq!(actions.len(), 1);
-        assert!(
-            matches!(&actions[0], FaultAction::Forward { delay, .. } if delay.is_zero())
-        );
+        assert!(matches!(&actions[0], FaultAction::Forward { delay, .. } if delay.is_zero()));
     }
 
     #[test]

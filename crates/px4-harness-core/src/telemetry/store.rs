@@ -1,39 +1,35 @@
-use std::time::Instant;
 use std::sync::Mutex;
-
-
+use std::time::Instant;
 
 #[derive(Debug, Clone)]
 pub struct PositionSample {
     pub timestamp: Instant,
-    pub latitude: f64,      // degrees
-    pub longitude: f64,     // degrees
-    pub altitude_msl: f64,  // meters above sea level
-    pub relative_alt: f64,  // meters above home/takeoff point
-    pub vx: f32,            // ground speed X (m/s)
-    pub vy: f32,            // ground speed Y (m/s)
-    pub vz: f32,            // vertical speed (m/s, positive = up)
+    pub latitude: f64,     // degrees
+    pub longitude: f64,    // degrees
+    pub altitude_msl: f64, // meters above sea level
+    pub relative_alt: f64, // meters above home/takeoff point
+    pub vx: f32,           // ground speed X (m/s)
+    pub vy: f32,           // ground speed Y (m/s)
+    pub vz: f32,           // vertical speed (m/s, positive = up)
 }
 
 /// A single attitude reading (orientation).
 #[derive(Debug, Clone)]
 pub struct AttitudeSample {
     pub timestamp: Instant,
-    pub roll: f32,          // radians
-    pub pitch: f32,         // radians
-    pub yaw: f32,           // radians
+    pub roll: f32,  // radians
+    pub pitch: f32, // radians
+    pub yaw: f32,   // radians
 }
-
 
 /// Vehicle state snapshot from heartbeat.
 #[derive(Debug, Clone)]
 pub struct VehicleStatus {
     pub timestamp: Instant,
     pub armed: bool,
-    pub flight_mode: u32,   // PX4 custom_mode bitfield
-    pub system_status: u8,  // MAV_STATE enum value
+    pub flight_mode: u32,  // PX4 custom_mode bitfield
+    pub system_status: u8, // MAV_STATE enum value
 }
-
 
 /// Landed state from EXTENDED_SYS_STATE.
 #[derive(Debug, Clone, PartialEq)]

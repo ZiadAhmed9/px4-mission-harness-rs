@@ -279,7 +279,11 @@ mod tests {
             acceptance_radius: 5.0,
         };
         let result = check_waypoint_reached(&store, &wp, 0, 60);
-        assert!(!result.passed, "should fail due to timeout: {}", result.reason);
+        assert!(
+            !result.passed,
+            "should fail due to timeout: {}",
+            result.reason
+        );
     }
 
     // --- altitude_reached tests ---

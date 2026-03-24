@@ -1,12 +1,12 @@
-use std::time::Instant;
 use ::mavlink::ardupilotmega::*;
 use ::mavlink::MavHeader;
+use std::time::Instant;
 use tokio::sync::mpsc;
 
 use std::sync::Arc;
 
-use crate::error::HarnessError;
 use super::store::*;
+use crate::error::HarnessError;
 
 pub fn start_telemetry_processor(
     mut rx: mpsc::UnboundedReceiver<Result<(MavHeader, MavMessage), HarnessError>>,
@@ -57,7 +57,9 @@ fn process_message(header: &MavHeader, msg: &MavMessage, store: &TelemetryStore)
         MavMessage::HEARTBEAT(hb) => {
             store.record_status(VehicleStatus {
                 timestamp: Instant::now(),
-                armed: hb.base_mode.contains(MavModeFlag::MAV_MODE_FLAG_SAFETY_ARMED),
+                armed: hb
+                    .base_mode
+                    .contains(MavModeFlag::MAV_MODE_FLAG_SAFETY_ARMED),
                 flight_mode: hb.custom_mode,
                 system_status: hb.system_status as u8,
             });

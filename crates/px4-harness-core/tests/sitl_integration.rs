@@ -23,9 +23,8 @@ async fn simple_mission_completes() {
         .await
         .expect("failed to start proxy");
 
-    let conn = Arc::new(
-        MavlinkConnection::connect("udpout:127.0.0.1:14570").expect("failed to connect"),
-    );
+    let conn =
+        Arc::new(MavlinkConnection::connect("udpout:127.0.0.1:14570").expect("failed to connect"));
     let rx = conn.start_recv_task();
     let controller = MissionController::new(Arc::clone(&conn));
 
@@ -34,11 +33,7 @@ async fn simple_mission_completes() {
         .await
         .expect("mission failed");
 
-    let results = evaluate_assertions(
-        &scenario.assertions,
-        &scenario.mission.waypoints,
-        &store,
-    );
+    let results = evaluate_assertions(&scenario.assertions, &scenario.mission.waypoints, &store);
 
     for result in &results {
         assert!(

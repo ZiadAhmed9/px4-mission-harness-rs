@@ -43,8 +43,9 @@ impl UdpProxy {
         let px4_addr_store: Arc<Mutex<Option<SocketAddr>>> = Arc::new(Mutex::new(None));
 
         // Socket facing the client (our harness)
-        let client_listen: SocketAddr =
-            format!("0.0.0.0:{}", self.client_listen_port).parse().unwrap();
+        let client_listen: SocketAddr = format!("0.0.0.0:{}", self.client_listen_port)
+            .parse()
+            .unwrap();
         let client_socket = Arc::new(UdpSocket::bind(client_listen).await?);
         let client_addr_store: Arc<Mutex<Option<SocketAddr>>> = Arc::new(Mutex::new(None));
 
@@ -72,7 +73,9 @@ impl UdpProxy {
                     let packet = &buf[..len];
 
                     // Learn PX4's source address from the first packet
-                    { *px4_addr.lock().unwrap() = Some(src_addr); }
+                    {
+                        *px4_addr.lock().unwrap() = Some(src_addr);
+                    }
 
                     // Only forward if we know the client's address
                     let target = { *client_addr.lock().unwrap() };
@@ -102,7 +105,9 @@ impl UdpProxy {
                     let packet = &buf[..len];
 
                     // Remember the client's address
-                    { *client_addr.lock().unwrap() = Some(src_addr); }
+                    {
+                        *client_addr.lock().unwrap() = Some(src_addr);
+                    }
 
                     // Forward to PX4 (if we know its address)
                     let target = { *px4_addr.lock().unwrap() };

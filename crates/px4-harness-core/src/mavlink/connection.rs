@@ -17,11 +17,12 @@ impl MavlinkConnection {
     /// Connect to PX4 SITL at the given UDP address.
     /// Example address: "udpin:0.0.0.0:14540"
     pub fn connect(address: &str) -> Result<Self, HarnessError> {
-        let connection = mavlink::connect::<MavMessage>(address)
-            .map_err(|e| HarnessError::MavlinkConnection {
+        let connection = mavlink::connect::<MavMessage>(address).map_err(|e| {
+            HarnessError::MavlinkConnection {
                 address: address.to_string(),
                 source: e,
-            })?;
+            }
+        })?;
 
         Ok(Self {
             connection,
@@ -34,9 +35,7 @@ impl MavlinkConnection {
     pub fn recv(&self) -> Result<(MavHeader, MavMessage), HarnessError> {
         self.connection
             .recv()
-            .map_err(|e| HarnessError::MavlinkReceive {
-                source: e,
-            })
+            .map_err(|e| HarnessError::MavlinkReceive { source: e })
     }
 
     /// Spawn a background task that receives messages and sends them through a channel.
@@ -68,9 +67,7 @@ impl MavlinkConnection {
         };
         self.connection
             .send(&header, message)
-            .map_err(|e| HarnessError::MavlinkSend {
-                source: e,
-            })?;
+            .map_err(|e| HarnessError::MavlinkSend { source: e })?;
         Ok(())
     }
 }

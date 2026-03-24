@@ -70,9 +70,10 @@ async fn main() -> Result<()> {
 
     // Connect to the proxy's client port
     println!("Connecting to PX4 SITL (through proxy)...");
-    let conn = Arc::new(MavlinkConnection::connect(
-        &format!("udpout:127.0.0.1:{}", cli.proxy_port),
-    )?);
+    let conn = Arc::new(MavlinkConnection::connect(&format!(
+        "udpout:127.0.0.1:{}",
+        cli.proxy_port
+    ))?);
 
     // Start receiving messages in background
     let rx = conn.start_recv_task();
@@ -102,11 +103,7 @@ async fn main() -> Result<()> {
     } // locks released here
 
     // Evaluate assertions against collected telemetry
-    let results = evaluate_assertions(
-        &scenario.assertions,
-        &scenario.mission.waypoints,
-        &store,
-    );
+    let results = evaluate_assertions(&scenario.assertions, &scenario.mission.waypoints, &store);
 
     println!("\n=== Assertion Results ===");
     let mut passed = 0;
@@ -120,7 +117,12 @@ async fn main() -> Result<()> {
             failed += 1;
         }
     }
-    println!("\n{} passed, {} failed, {} total", passed, failed, results.len());
+    println!(
+        "\n{} passed, {} failed, {} total",
+        passed,
+        failed,
+        results.len()
+    );
 
     // Build report and write to files if requested
     let report = Report::build(&scenario, &store, &results);

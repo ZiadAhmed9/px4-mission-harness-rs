@@ -346,14 +346,19 @@ impl MissionController {
                             // We want PX4 to use lat, lon, alt (bits 0,1,2 = 0)
                             // and ignore vx,vy,vz,ax,ay,az,yaw,yaw_rate (bits 3-10 = 1)
                             type_mask: PositionTargetTypemask::from_bits_truncate(
-                                0b0000_0111_1111_1000
+                                0b0000_0111_1111_1000,
                             ),
                             lat_int: lat,
                             lon_int: lon,
                             alt,
-                            vx: 0.0, vy: 0.0, vz: 0.0,
-                            afx: 0.0, afy: 0.0, afz: 0.0,
-                            yaw: 0.0, yaw_rate: 0.0,
+                            vx: 0.0,
+                            vy: 0.0,
+                            vz: 0.0,
+                            afx: 0.0,
+                            afy: 0.0,
+                            afz: 0.0,
+                            yaw: 0.0,
+                            yaw_rate: 0.0,
                         },
                     ));
                     sleep(Duration::from_millis(500)).await;
@@ -385,7 +390,8 @@ impl MissionController {
                 }
                 sleep(Duration::from_millis(500)).await;
             }
-        }).await;
+        })
+        .await;
 
         match takeoff_ok {
             Ok(_) => println!("Takeoff complete (verified by telemetry)"),
@@ -491,11 +497,7 @@ mod tests {
     fn haversine_known_distance() {
         // Two points ~111m apart (0.001 degrees of latitude)
         let d = MissionController::haversine_distance(47.397742, 8.545594, 47.398742, 8.545594);
-        assert!(
-            (d - 111.2).abs() < 1.0,
-            "expected ~111m, got {}",
-            d
-        );
+        assert!((d - 111.2).abs() < 1.0, "expected ~111m, got {}", d);
     }
 
     #[test]

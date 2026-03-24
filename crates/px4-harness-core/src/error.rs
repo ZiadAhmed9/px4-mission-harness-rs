@@ -36,7 +36,7 @@ pub enum HarnessError {
         #[source]
         source: mavlink::error::MessageWriteError,
     },
-    
+
     #[error("mission error: {reason}")]
     MissionError { reason: String },
 

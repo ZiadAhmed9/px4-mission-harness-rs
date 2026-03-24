@@ -4,6 +4,7 @@ use px4_harness_core::assertion::engine::evaluate_assertions;
 use px4_harness_core::mavlink::connection::MavlinkConnection;
 use px4_harness_core::mission::controller::MissionController;
 use px4_harness_core::proxy::udp_proxy::UdpProxy;
+use px4_harness_core::report::{json, junit, markdown, model::Report};
 use px4_harness_core::scenario::ScenarioFile;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -12,9 +13,21 @@ use std::sync::Arc;
 #[derive(Parser)] // Derive the Parser trait from clap to enable command-line argument parsing
 #[command(version, about)] // Automatically generate version and about information for the command-line interface
 struct Cli {
-    /// The scenario to execute (e.g., "run", "test", "version")
+    /// Path to the scenario TOML file
     #[arg(short, long)]
-    scenario: PathBuf, // Define a command-line argument named "scenario" that accepts a file path
+    scenario: PathBuf,
+
+    /// Write JSON report to this file
+    #[arg(long)]
+    json: Option<PathBuf>,
+
+    /// Write Markdown report to this file
+    #[arg(long)]
+    markdown: Option<PathBuf>,
+
+    /// Write JUnit XML report to this file
+    #[arg(long)]
+    junit: Option<PathBuf>,
 }
 
 #[tokio::main] // Use the Tokio runtime for asynchronous execution
@@ -89,6 +102,22 @@ async fn main() -> Result<()> {
         }
     }
     println!("\n{} passed, {} failed, {} total", passed, failed, results.len());
+
+    // Build report and write to files if requested
+    let report = Report::build(&scenario, &store, &results);
+
+    if let Some(path) = &cli.json {
+        std::fs::write(path, json::render_json(&report))?;
+        println!("JSON report written to {}", path.display());
+    }
+    if let Some(path) = &cli.markdown {
+        std::fs::write(path, markdown::render_markdown(&report))?;
+        println!("Markdown report written to {}", path.display());
+    }
+    if let Some(path) = &cli.junit {
+        std::fs::write(path, junit::render_junit(&report))?;
+        println!("JUnit XML report written to {}", path.display());
+    }
 
     Ok(())
 }

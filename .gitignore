@@ -18,3 +18,8 @@ Thumbs.db
 Documentation/
 CLAUDE.md
 .claude/settings.json
+
+# Generated reports
+report*.json
+report*.md
+report*.xml

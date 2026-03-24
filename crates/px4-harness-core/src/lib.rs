@@ -7,6 +7,7 @@ pub mod fault;
 pub mod mavlink;
 pub mod mission;
 pub mod proxy;
+pub mod report;
 pub mod scenario;
 pub mod telemetry;
 

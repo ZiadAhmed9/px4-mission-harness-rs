@@ -258,6 +258,7 @@ impl MissionController {
         &self,
         mission: &crate::scenario::Mission,
         rx: mpsc::UnboundedReceiver<Result<(MavHeader, MavMessage), HarnessError>>,
+        verbose: bool,
     ) -> Result<Arc<TelemetryStore>, HarnessError> {
         let store = Arc::new(TelemetryStore::new());
         let altitude = mission.takeoff_altitude as f32;
@@ -265,19 +266,23 @@ impl MissionController {
         // Insert telemetry processor between receiver and controller
         let mut rx = start_telemetry_processor(rx, Arc::clone(&store));
 
-        // Optional: periodic telemetry logger
-        let debug_store = Arc::clone(&store);
-        let debug_handle = tokio::spawn(async move {
-            loop {
-                if let Some(pos) = debug_store.latest_position() {
-                    println!(
-                        "  [TELEM] pos=({:.6}, {:.6}) alt={:.1}m",
-                        pos.latitude, pos.longitude, pos.relative_alt
-                    );
+        // Optional: periodic telemetry logger (only when --verbose)
+        let debug_handle = if verbose {
+            let debug_store = Arc::clone(&store);
+            Some(tokio::spawn(async move {
+                loop {
+                    if let Some(pos) = debug_store.latest_position() {
+                        println!(
+                            "  [TELEM] pos=({:.6}, {:.6}) alt={:.1}m",
+                            pos.latitude, pos.longitude, pos.relative_alt
+                        );
+                    }
+                    sleep(Duration::from_secs(3)).await;
                 }
-                sleep(Duration::from_secs(3)).await;
-            }
-        });
+            }))
+        } else {
+            None
+        };
 
         // Step 0: Send GCS heartbeats so PX4 knows we're connected.
         // Without this, PX4 refuses to arm ("No connection to the GCS").
@@ -452,7 +457,9 @@ impl MissionController {
 
         println!("Mission complete");
 
-        debug_handle.abort();
+        if let Some(h) = debug_handle {
+            h.abort();
+        }
         Ok(store) // Return the telemetry store for assertions after the mission
     }
 

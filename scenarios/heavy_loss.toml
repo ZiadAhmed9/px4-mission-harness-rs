@@ -1,0 +1,24 @@
+[scenario]
+name = "Heavy packet loss mission"
+description = "Tests mission resilience under 30% packet loss"
+
+[mission]
+takeoff_altitude = 10.0
+
+[[mission.waypoints]]
+latitude = 47.397742
+longitude = 8.545594
+altitude = 10.0
+acceptance_radius = 5.0
+
+[faults]
+loss_rate = 0.3
+
+[[assertions]]
+type = "waypoint_reached"
+waypoint_index = 0
+timeout_secs = 120
+
+[[assertions]]
+type = "landed"
+timeout_secs = 180

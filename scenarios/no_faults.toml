@@ -1,0 +1,23 @@
+[scenario]
+name = "Baseline mission (no faults)"
+description = "Fly to one waypoint and land with zero communication degradation"
+
+[mission]
+takeoff_altitude = 10.0
+
+[[mission.waypoints]]
+latitude = 47.397742
+longitude = 8.545594
+altitude = 10.0
+acceptance_radius = 5.0
+
+[faults]
+
+[[assertions]]
+type = "waypoint_reached"
+waypoint_index = 0
+timeout_secs = 60
+
+[[assertions]]
+type = "landed"
+timeout_secs = 120

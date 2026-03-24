@@ -54,17 +54,15 @@ timeout_secs = 120
 
 ## Project Status
 
-**Early development** — building the foundation incrementally:
-
 - [x] Project scaffolding (Cargo workspace, CLI skeleton)
 - [x] Scenario parsing (TOML format, validation, error handling)
 - [x] MAVLink connection (heartbeat, basic communication with PX4 SITL)
 - [x] Mission controller (arm, takeoff, waypoints, land)
-- [ ] Telemetry collection (position, attitude, vehicle status)
-- [ ] Assertion engine (waypoint reached, altitude, landing checks)
-- [ ] UDP proxy with fault injection (delay, drop, duplicate, jitter, replay)
-- [ ] Report generation (JSON, Markdown, JUnit XML)
-- [ ] CLI polish and integration tests
+- [x] Telemetry collection (position, attitude, vehicle status)
+- [x] Assertion engine (waypoint reached, altitude, landing checks)
+- [x] UDP proxy with fault injection (delay, drop, duplicate, jitter, replay)
+- [x] Report generation (JSON, Markdown, JUnit XML)
+- [x] CLI polish and integration tests
 
 ## Stack
 
@@ -73,19 +71,40 @@ timeout_secs = 120
 | **Rust** | Implementation language |
 | **Tokio** | Async runtime |
 | **MAVLink** (`mavlink` crate) | Direct protocol-level communication with PX4 |
-| **PX4 SITL + Gazebo Classic** | Simulated drone environment |
+| **PX4 SITL + Gazebo** | Simulated drone environment |
 | **TOML** | Scenario definition format |
 
 MAVSDK is intentionally not used. The fault injection layer requires direct control over raw MAVLink packets — MAVSDK abstracts away exactly what we need to manipulate.
 
-## Building
+## Usage
+
+```bash
+# Basic run
+cargo run -p px4-harness -- -s scenarios/simple_mission.toml
+
+# With report output
+cargo run -p px4-harness -- -s scenarios/simple_mission.toml \
+    --json report.json --markdown report.md --junit report.xml
+
+# Custom ports
+cargo run -p px4-harness -- -s scenarios/simple_mission.toml \
+    --px4-port 14550 --proxy-port 14560
+
+# Verbose telemetry logging
+cargo run -p px4-harness -- -s scenarios/simple_mission.toml --verbose
+```
+
+## Building & Testing
 
 ```bash
 cargo build                              # build all crates
-cargo run -p px4-harness -- --help       # run CLI
-cargo test                               # run all tests
+cargo run -p px4-harness -- --help       # show CLI options
+cargo test                               # run unit tests (no SITL needed)
 cargo clippy --workspace                 # lint
 cargo fmt --all -- --check               # format check
+
+# Integration tests (requires running PX4 SITL)
+cargo test -p px4-harness-core --features sitl -- --nocapture
 ```
 
 ## Architecture
@@ -108,4 +127,9 @@ px4-mission-harness-rs/
 
 ## License
 
-TBD
+Licensed under either of:
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
+- MIT License ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
+
+at your option.

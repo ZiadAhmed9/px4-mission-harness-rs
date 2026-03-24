@@ -17,6 +17,18 @@ struct Cli {
     #[arg(short, long)]
     scenario: PathBuf,
 
+    /// Port where PX4 SITL sends MAVLink (default: 14550)
+    #[arg(long, default_value_t = 14550)]
+    px4_port: u16,
+
+    /// Port for the proxy's client side (default: 14560)
+    #[arg(long, default_value_t = 14560)]
+    proxy_port: u16,
+
+    /// Enable verbose telemetry logging during mission
+    #[arg(short, long)]
+    verbose: bool,
+
     /// Write JSON report to this file
     #[arg(long)]
     json: Option<PathBuf>,
@@ -46,16 +58,21 @@ async fn main() -> Result<()> {
     // Start the fault injection proxy between PX4 and our harness.
     // PX4 SITL sends GCS MAVLink to port 14550, so the proxy listens there.
     // Our harness connects to the proxy on port 14560.
-    let proxy = UdpProxy::new(14550, 14560);
+    let proxy = UdpProxy::new(cli.px4_port, cli.proxy_port);
     let (proxy_addr, _proxy_handle) = proxy
         .start(scenario.faults.clone())
         .await
         .context("failed to start proxy")?;
-    println!("Proxy: PX4→14550→[faults]→{}→harness", proxy_addr);
+    println!(
+        "Proxy: PX4 ({}) → [faults] → harness ({})",
+        cli.px4_port, proxy_addr
+    );
 
     // Connect to the proxy's client port
     println!("Connecting to PX4 SITL (through proxy)...");
-    let conn = Arc::new(MavlinkConnection::connect("udpout:127.0.0.1:14560")?);
+    let conn = Arc::new(MavlinkConnection::connect(
+        &format!("udpout:127.0.0.1:{}", cli.proxy_port),
+    )?);
 
     // Start receiving messages in background
     let rx = conn.start_recv_task();
@@ -63,7 +80,9 @@ async fn main() -> Result<()> {
     // Create mission controller and run
     let controller = MissionController::new(Arc::clone(&conn));
 
-    let store = controller.run_mission(&scenario.mission, rx).await?;
+    let store = controller
+        .run_mission(&scenario.mission, rx, cli.verbose)
+        .await?;
 
     // Print telemetry summary
     {
@@ -117,6 +136,11 @@ async fn main() -> Result<()> {
     if let Some(path) = &cli.junit {
         std::fs::write(path, junit::render_junit(&report))?;
         println!("JUnit XML report written to {}", path.display());
+    }
+
+    // Exit with non-zero code if any assertion failed (important for CI)
+    if report.failed_count > 0 {
+        std::process::exit(1);
     }
 
     Ok(())

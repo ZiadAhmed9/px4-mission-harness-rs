@@ -445,6 +445,11 @@ impl MissionController {
             Ok(_) => println!("Landing confirmed by telemetry"),
             Err(_) => println!("Landing not confirmed within timeout"),
         }
+
+        // Wait a few seconds for PX4 to disarm and send the disarmed heartbeat.
+        // This ensures the assertion engine can detect the armed->disarmed transition.
+        sleep(Duration::from_secs(5)).await;
+
         println!("Mission complete");
 
         debug_handle.abort();

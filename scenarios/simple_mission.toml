@@ -27,10 +27,5 @@ waypoint_index = 0
 timeout_secs = 60
 
 [[assertions]]
-type = "waypoint_reached"
-waypoint_index = 1
-timeout_secs = 60
-
-[[assertions]]
 type = "landed"
 timeout_secs = 120

@@ -1,11 +1,12 @@
 use anyhow::{Context, Result}; //import anyhow
 use clap::Parser; //import clap for command-line argument parsing
-use px4_harness_core::mavlink::connection::MavlinkConnection; // our MAVLink connection wrapper
+use px4_harness_core::assertion::engine::evaluate_assertions;
+use px4_harness_core::mavlink::connection::MavlinkConnection;
 use px4_harness_core::scenario::ScenarioFile;
 use std::path::PathBuf; //import PathBuf for handling file paths
 
-use std::sync::Arc;
 use px4_harness_core::mission::controller::MissionController;
+use std::sync::Arc;
 
 /// PX4 Mission Harness: A tool for testing the resilience of PX4 missions.
 #[derive(Parser)] // Derive the Parser trait from clap to enable command-line argument parsing
@@ -38,7 +39,46 @@ async fn main() -> Result<()> {
 
     // Create mission controller and run
     let controller = MissionController::new(Arc::clone(&conn));
-    controller.run_mission(&scenario.mission, rx).await?;
+
+    let store = controller.run_mission(&scenario.mission, rx).await?;
+
+    // Print telemetry summary
+    {
+        let positions = store.positions.lock().unwrap();
+        let attitudes = store.attitudes.lock().unwrap();
+        let statuses = store.statuses.lock().unwrap();
+        println!("\nTelemetry summary:");
+        println!("  Position samples: {}", positions.len());
+        println!("  Attitude samples: {}", attitudes.len());
+        println!("  Status samples: {}", statuses.len());
+        if let Some(last) = positions.last() {
+            println!(
+                "  Final position: ({:.6}, {:.6}) alt={:.1}m",
+                last.latitude, last.longitude, last.relative_alt
+            );
+        }
+    } // locks released here
+
+    // Evaluate assertions against collected telemetry
+    let results = evaluate_assertions(
+        &scenario.assertions,
+        &scenario.mission.waypoints,
+        &store,
+    );
+
+    println!("\n=== Assertion Results ===");
+    let mut passed = 0;
+    let mut failed = 0;
+    for result in &results {
+        let status = if result.passed { "PASS" } else { "FAIL" };
+        println!("  [{}] {}: {}", status, result.name, result.reason);
+        if result.passed {
+            passed += 1;
+        } else {
+            failed += 1;
+        }
+    }
+    println!("\n{} passed, {} failed, {} total", passed, failed, results.len());
 
     Ok(())
 }

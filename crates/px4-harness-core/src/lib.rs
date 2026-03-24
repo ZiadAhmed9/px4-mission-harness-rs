@@ -1,6 +1,7 @@
 //! px4-harness-core: Core logic for PX4 mission resilience testing.
 
 // A function that returns a string literal containing the version of the crate, obtained from the environment variable set by Cargo at compile time.
+pub mod assertion;
 pub mod error;
 pub mod mavlink;
 pub mod mission;

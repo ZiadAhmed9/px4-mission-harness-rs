@@ -4,7 +4,7 @@ A Rust-based CLI tool for deterministic, repeatable testing of PX4 drone mission
 
 ## Demo
 
-[![asciicast](https://asciinema.org/a/4p5mqXZXEzSvMlt0.svg)](https://asciinema.org/a/4p5mqXZXEzSvMlt0)
+![Demo](demo.gif)
 
 ## The Problem
 

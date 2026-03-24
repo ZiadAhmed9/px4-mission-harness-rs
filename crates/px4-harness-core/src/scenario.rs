@@ -40,7 +40,7 @@ fn default_acceptance_radius() -> f64 {
     5.0
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct FaultProfile {
     #[serde(default)]
     pub delay_ms: u64,

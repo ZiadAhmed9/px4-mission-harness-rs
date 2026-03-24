@@ -2,6 +2,10 @@
 
 A Rust-based CLI tool for deterministic, repeatable testing of PX4 drone missions under degraded communication and timing conditions.
 
+## Demo
+
+[![asciicast](https://asciinema.org/a/4p5mqXZXEzSvMlt0.svg)](https://asciinema.org/a/4p5mqXZXEzSvMlt0)
+
 ## The Problem
 
 Drone teams validate missions through SITL simulation runs, manual flight tests, and ad hoc scripts. These methods confirm that a mission works under ideal conditions — but they don't answer harder questions:

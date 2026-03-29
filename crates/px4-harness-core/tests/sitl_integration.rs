@@ -19,7 +19,7 @@ async fn simple_mission_completes() {
 
     let proxy = UdpProxy::new(14550, 14570);
     let (_addr, _handle) = proxy
-        .start(scenario.faults.clone())
+        .start(scenario.faults.clone(), scenario.fault_phases.clone())
         .await
         .expect("failed to start proxy");
 

@@ -1,0 +1,9 @@
+[suite]
+name = "Fault tolerance regression suite"
+description = "Compare mission behavior across different fault profiles"
+scenarios = [
+    "no_faults.toml",
+    "simple_mission.toml",
+    "heavy_loss.toml",
+    "high_delay.toml",
+]

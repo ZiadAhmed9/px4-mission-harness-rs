@@ -486,6 +486,57 @@ impl MissionController {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn haversine_always_non_negative(
+            lat1 in -90.0f64..90.0,
+            lon1 in -180.0f64..180.0,
+            lat2 in -90.0f64..90.0,
+            lon2 in -180.0f64..180.0,
+        ) {
+            let d = MissionController::haversine_distance(lat1, lon1, lat2, lon2);
+            prop_assert!(d >= 0.0, "distance was negative: {}", d);
+        }
+
+        #[test]
+        fn haversine_same_point_is_zero_prop(
+            lat in -90.0f64..90.0,
+            lon in -180.0f64..180.0,
+        ) {
+            let d = MissionController::haversine_distance(lat, lon, lat, lon);
+            prop_assert!((d - 0.0).abs() < 1e-10, "same point distance was {}", d);
+        }
+
+        #[test]
+        fn haversine_symmetric(
+            lat1 in -90.0f64..90.0,
+            lon1 in -180.0f64..180.0,
+            lat2 in -90.0f64..90.0,
+            lon2 in -180.0f64..180.0,
+        ) {
+            let d1 = MissionController::haversine_distance(lat1, lon1, lat2, lon2);
+            let d2 = MissionController::haversine_distance(lat2, lon2, lat1, lon1);
+            prop_assert!((d1 - d2).abs() < 1e-6, "not symmetric: {} vs {}", d1, d2);
+        }
+
+        #[test]
+        fn haversine_triangle_inequality(
+            lat1 in -90.0f64..90.0,
+            lon1 in -180.0f64..180.0,
+            lat2 in -90.0f64..90.0,
+            lon2 in -180.0f64..180.0,
+            lat3 in -90.0f64..90.0,
+            lon3 in -180.0f64..180.0,
+        ) {
+            let d12 = MissionController::haversine_distance(lat1, lon1, lat2, lon2);
+            let d23 = MissionController::haversine_distance(lat2, lon2, lat3, lon3);
+            let d13 = MissionController::haversine_distance(lat1, lon1, lat3, lon3);
+            // Allow small floating point tolerance
+            prop_assert!(d13 <= d12 + d23 + 1e-6, "triangle inequality violated: {} > {} + {}", d13, d12, d23);
+        }
+    }
 
     #[test]
     fn haversine_same_point() {

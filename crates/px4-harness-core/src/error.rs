@@ -42,4 +42,14 @@ pub enum HarnessError {
 
     #[error("command timed out: {command}")]
     MissionTimeout { command: String },
+
+    #[error("failed to read suite file: {path}")]
+    SuiteFileRead {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[error("suite validation failed: {reason}")]
+    SuiteValidation { reason: String },
 }

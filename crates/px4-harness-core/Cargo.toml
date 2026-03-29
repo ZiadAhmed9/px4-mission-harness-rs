@@ -12,6 +12,10 @@ mavlink = { version = "0.14", features = ["ardupilotmega", "udp"] }
 rand = "0.9"    # Random number generation for fault injection (drop probability, jitter)
 serde_json = "1" # JSON serialization for report output
 
+[dev-dependencies]
+proptest = "1"
+tempfile = "3"
+
 [features]
 default = []
 sitl = [] # Enable integration tests that require a running PX4 SITL

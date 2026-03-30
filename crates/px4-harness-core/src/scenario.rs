@@ -2,6 +2,7 @@
 
 use crate::error::HarnessError;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::path::Path;
 
 //Struct of the entire scenario file, which includes metadata, mission details, fault profiles, and assertions.
@@ -14,6 +15,10 @@ pub struct ScenarioFile {
     /// Optional time-based fault phases. When empty, only `faults` is used.
     #[serde(default)]
     pub fault_phases: Vec<FaultPhase>,
+    /// Optional per-vehicle configurations for multi-vehicle scenarios.
+    /// When empty, the scenario is treated as single-vehicle.
+    #[serde(default)]
+    pub vehicles: Vec<VehicleConfig>,
 }
 
 //ScenarioMeta struct contains the name and an optional description of the scenario. The description is optional and will default to None if not provided in the TOML file.
@@ -71,6 +76,23 @@ pub struct FaultPhase {
     pub profile: FaultProfile,
 }
 
+/// Per-vehicle configuration for multi-vehicle scenarios.
+#[derive(Debug, Deserialize, Clone)]
+pub struct VehicleConfig {
+    /// MAVLink system ID for this vehicle. Must not be 0 (broadcast) or 255 (GCS reserved).
+    pub system_id: u8,
+    /// UDP port where PX4 sends MAVLink output for this vehicle.
+    pub px4_port: u16,
+    /// UDP port the proxy listens on for the client side of this vehicle.
+    pub proxy_port: u16,
+    /// Per-vehicle fault profile. If absent, falls back to the scenario-level `faults`.
+    #[serde(default)]
+    pub faults: Option<FaultProfile>,
+    /// Per-vehicle fault phases. If absent, falls back to the scenario-level `fault_phases`.
+    #[serde(default)]
+    pub fault_phases: Option<Vec<FaultPhase>>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
 pub enum Assertion {
@@ -110,6 +132,14 @@ pub enum Assertion {
     #[serde(rename = "max_ground_speed")]
     MaxGroundSpeed {
         max_speed_ms: f64,
+        timeout_secs: u64,
+    },
+
+    /// Inter-vehicle assertion: minimum separation distance between any two vehicles.
+    #[serde(rename = "min_separation")]
+    MinSeparation {
+        /// Minimum distance in meters between any two vehicles at all times.
+        min_distance_m: f64,
         timeout_secs: u64,
     },
 }
@@ -229,7 +259,59 @@ impl ScenarioFile {
                 });
             }
         }
+
+        // Validate multi-vehicle config if present
+        if !self.vehicles.is_empty() {
+            let mut system_ids = HashSet::new();
+            let mut px4_ports = HashSet::new();
+            let mut proxy_ports = HashSet::new();
+
+            for (i, vehicle) in self.vehicles.iter().enumerate() {
+                if vehicle.system_id == 0 {
+                    return Err(HarnessError::ScenarioValidation {
+                        reason: format!(
+                            "vehicles[{i}] system_id cannot be 0 (MAVLink broadcast address)"
+                        ),
+                    });
+                }
+                if vehicle.system_id == 255 {
+                    return Err(HarnessError::ScenarioValidation {
+                        reason: format!("vehicles[{i}] system_id cannot be 255 (reserved for GCS)"),
+                    });
+                }
+                if !system_ids.insert(vehicle.system_id) {
+                    return Err(HarnessError::ScenarioValidation {
+                        reason: format!(
+                            "vehicles[{i}] has duplicate system_id {}",
+                            vehicle.system_id
+                        ),
+                    });
+                }
+                if !px4_ports.insert(vehicle.px4_port) {
+                    return Err(HarnessError::ScenarioValidation {
+                        reason: format!(
+                            "vehicles[{i}] has duplicate px4_port {}",
+                            vehicle.px4_port
+                        ),
+                    });
+                }
+                if !proxy_ports.insert(vehicle.proxy_port) {
+                    return Err(HarnessError::ScenarioValidation {
+                        reason: format!(
+                            "vehicles[{i}] has duplicate proxy_port {}",
+                            vehicle.proxy_port
+                        ),
+                    });
+                }
+            }
+        }
+
         Ok(())
+    }
+
+    /// Returns true if this is a multi-vehicle scenario.
+    pub fn is_multi_vehicle(&self) -> bool {
+        !self.vehicles.is_empty()
     }
 }
 
@@ -685,6 +767,240 @@ mod tests {
             {phases_block}
             "#
         )
+    }
+
+    // --- Phase 4: multi-vehicle parsing and validation tests ---
+
+    /// Build a minimal valid scenario TOML with a `[[vehicles]]` block appended.
+    fn minimal_toml_with_vehicles(vehicles_block: &str) -> String {
+        format!(
+            r#"
+            [scenario]
+            name = "Test"
+
+            [mission]
+            takeoff_altitude = 10.0
+
+            [[mission.waypoints]]
+            latitude = 47.0
+            longitude = 8.0
+            altitude = 10.0
+
+            [faults]
+
+            [[assertions]]
+            type = "landed"
+            timeout_secs = 60
+
+            {vehicles_block}
+            "#
+        )
+    }
+
+    #[test]
+    fn parse_vehicles_config() {
+        let toml_str = minimal_toml_with_vehicles(
+            r#"
+            [[vehicles]]
+            system_id = 1
+            px4_port = 14550
+            proxy_port = 14560
+
+            [[vehicles]]
+            system_id = 2
+            px4_port = 14551
+            proxy_port = 14561
+            "#,
+        );
+        let scenario: ScenarioFile = toml::from_str(&toml_str).unwrap();
+        assert_eq!(scenario.vehicles.len(), 2);
+        assert_eq!(scenario.vehicles[0].system_id, 1);
+        assert_eq!(scenario.vehicles[0].px4_port, 14550);
+        assert_eq!(scenario.vehicles[0].proxy_port, 14560);
+        assert_eq!(scenario.vehicles[1].system_id, 2);
+        assert_eq!(scenario.vehicles[1].px4_port, 14551);
+        assert_eq!(scenario.vehicles[1].proxy_port, 14561);
+    }
+
+    #[test]
+    fn no_vehicles_backward_compat() {
+        let toml_str = r#"
+            [scenario]
+            name = "Legacy scenario"
+
+            [mission]
+            takeoff_altitude = 10.0
+
+            [[mission.waypoints]]
+            latitude = 47.0
+            longitude = 8.0
+            altitude = 10.0
+
+            [faults]
+
+            [[assertions]]
+            type = "landed"
+            timeout_secs = 60
+        "#;
+        let scenario: ScenarioFile = toml::from_str(toml_str).unwrap();
+        assert!(
+            scenario.vehicles.is_empty(),
+            "vehicles should be empty when not specified"
+        );
+        assert!(
+            !scenario.is_multi_vehicle(),
+            "is_multi_vehicle() should return false when no vehicles are configured"
+        );
+    }
+
+    #[test]
+    fn reject_duplicate_system_ids() {
+        let toml_str = minimal_toml_with_vehicles(
+            r#"
+            [[vehicles]]
+            system_id = 1
+            px4_port = 14550
+            proxy_port = 14560
+
+            [[vehicles]]
+            system_id = 1
+            px4_port = 14551
+            proxy_port = 14561
+            "#,
+        );
+        let scenario: ScenarioFile = toml::from_str(&toml_str).unwrap();
+        let result = scenario.validate();
+        assert!(
+            result.is_err(),
+            "duplicate system_id should fail validation"
+        );
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("duplicate system_id"),
+            "error should mention duplicate system_id, got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn reject_duplicate_px4_ports() {
+        let toml_str = minimal_toml_with_vehicles(
+            r#"
+            [[vehicles]]
+            system_id = 1
+            px4_port = 14550
+            proxy_port = 14560
+
+            [[vehicles]]
+            system_id = 2
+            px4_port = 14550
+            proxy_port = 14561
+            "#,
+        );
+        let scenario: ScenarioFile = toml::from_str(&toml_str).unwrap();
+        let result = scenario.validate();
+        assert!(result.is_err(), "duplicate px4_port should fail validation");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("duplicate px4_port"),
+            "error should mention duplicate px4_port, got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn reject_duplicate_proxy_ports() {
+        let toml_str = minimal_toml_with_vehicles(
+            r#"
+            [[vehicles]]
+            system_id = 1
+            px4_port = 14550
+            proxy_port = 14560
+
+            [[vehicles]]
+            system_id = 2
+            px4_port = 14551
+            proxy_port = 14560
+            "#,
+        );
+        let scenario: ScenarioFile = toml::from_str(&toml_str).unwrap();
+        let result = scenario.validate();
+        assert!(
+            result.is_err(),
+            "duplicate proxy_port should fail validation"
+        );
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("duplicate proxy_port"),
+            "error should mention duplicate proxy_port, got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn reject_system_id_zero() {
+        let toml_str = minimal_toml_with_vehicles(
+            r#"
+            [[vehicles]]
+            system_id = 0
+            px4_port = 14550
+            proxy_port = 14560
+            "#,
+        );
+        let scenario: ScenarioFile = toml::from_str(&toml_str).unwrap();
+        let result = scenario.validate();
+        assert!(result.is_err(), "system_id = 0 should fail validation");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("broadcast") || err_msg.contains("0"),
+            "error should mention broadcast address, got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn reject_system_id_255() {
+        let toml_str = minimal_toml_with_vehicles(
+            r#"
+            [[vehicles]]
+            system_id = 255
+            px4_port = 14550
+            proxy_port = 14560
+            "#,
+        );
+        let scenario: ScenarioFile = toml::from_str(&toml_str).unwrap();
+        let result = scenario.validate();
+        assert!(result.is_err(), "system_id = 255 should fail validation");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("GCS") || err_msg.contains("255"),
+            "error should mention GCS-reserved address, got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn parse_min_separation_assertion() {
+        let toml_str = minimal_toml_with_assertions(
+            r#"
+            [[assertions]]
+            type = "min_separation"
+            min_distance_m = 30.0
+            timeout_secs = 60
+            "#,
+        );
+        let scenario: ScenarioFile = toml::from_str(&toml_str).unwrap();
+        assert_eq!(scenario.assertions.len(), 1);
+        let min_sep = scenario
+            .assertions
+            .iter()
+            .find(|a| matches!(a, Assertion::MinSeparation { .. }))
+            .expect("MinSeparation assertion should be present");
+        match min_sep {
+            Assertion::MinSeparation {
+                min_distance_m,
+                timeout_secs,
+            } => {
+                assert_eq!(*min_distance_m, 30.0);
+                assert_eq!(*timeout_secs, 60);
+            }
+            other => panic!("expected MinSeparation, got {:?}", other),
+        }
     }
 
     // --- Phase 3: fault_phases parsing and validation tests ---

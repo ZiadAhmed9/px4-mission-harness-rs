@@ -3,7 +3,9 @@
 // A function that returns a string literal containing the version of the crate, obtained from the environment variable set by Cargo at compile time.
 pub mod assertion;
 pub mod error;
+pub mod event;
 pub mod fault;
+pub mod generate;
 pub mod mavlink;
 pub mod mission;
 pub mod proxy;

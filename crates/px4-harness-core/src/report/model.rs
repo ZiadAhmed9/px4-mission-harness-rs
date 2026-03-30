@@ -5,18 +5,84 @@ use crate::mission::controller::MissionController;
 use crate::scenario::ScenarioFile;
 use crate::telemetry::store::TelemetryStore;
 
+/// Report for a multi-vehicle scenario run.
+#[derive(Debug, Serialize)]
+pub struct MultiVehicleReport {
+    pub scenario_name: String,
+    pub scenario_description: Option<String>,
+    /// Per-vehicle reports
+    pub vehicles: Vec<VehicleReport>,
+    /// Inter-vehicle assertion results
+    pub inter_vehicle_assertions: Vec<AssertionReport>,
+    pub all_passed: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct VehicleReport {
+    pub system_id: u8,
+    pub report: Report,
+}
+
+impl MultiVehicleReport {
+    pub fn build(
+        scenario: &ScenarioFile,
+        vehicle_reports: Vec<(u8, Report)>,
+        inter_vehicle_results: Vec<AssertionResult>,
+    ) -> Self {
+        let inter_assertions: Vec<AssertionReport> = inter_vehicle_results
+            .iter()
+            .map(|r| AssertionReport {
+                name: r.name.clone(),
+                passed: r.passed,
+                reason: r.reason.clone(),
+                elapsed_secs: r.elapsed.map(|d| d.as_secs_f64()),
+            })
+            .collect();
+
+        let vehicles: Vec<VehicleReport> = vehicle_reports
+            .into_iter()
+            .map(|(id, report)| VehicleReport {
+                system_id: id,
+                report,
+            })
+            .collect();
+
+        let all_vehicle_passed = vehicles.iter().all(|v| v.report.passed);
+        let all_inter_passed = inter_assertions.iter().all(|a| a.passed);
+
+        MultiVehicleReport {
+            scenario_name: scenario.scenario.name.clone(),
+            scenario_description: scenario.scenario.description.clone(),
+            vehicles,
+            inter_vehicle_assertions: inter_assertions,
+            all_passed: all_vehicle_passed && all_inter_passed,
+        }
+    }
+}
+
 /// Complete report for one scenario run.
 #[derive(Debug, Serialize)]
 pub struct Report {
     pub scenario_name: String,
     pub scenario_description: Option<String>,
     pub faults: FaultSummary,
+    pub fault_stats: Option<FaultStatsSummary>,
     pub telemetry: TelemetrySummary,
     pub assertions: Vec<AssertionReport>,
     pub passed: bool,
     pub total: usize,
     pub passed_count: usize,
     pub failed_count: usize,
+}
+
+/// Runtime statistics from the fault injection pipeline.
+#[derive(Debug, Serialize)]
+pub struct FaultStatsSummary {
+    pub packets_processed: u64,
+    pub packets_forwarded: u64,
+    pub packets_dropped: u64,
+    pub packets_duplicated: u64,
+    pub packets_replayed: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -146,6 +212,7 @@ impl Report {
         Report {
             scenario_name: scenario.scenario.name.clone(),
             scenario_description: scenario.scenario.description.clone(),
+            fault_stats: None,
             faults: FaultSummary {
                 delay_ms: scenario.faults.delay_ms,
                 jitter_ms: scenario.faults.jitter_ms,

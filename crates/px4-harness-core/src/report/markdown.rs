@@ -1,4 +1,4 @@
-use crate::report::model::{Report, SuiteReport};
+use crate::report::model::{MultiVehicleReport, Report, SuiteReport};
 
 /// Render the report as a Markdown document.
 pub fn render_markdown(report: &Report) -> String {
@@ -149,6 +149,86 @@ pub fn render_suite_markdown(report: &SuiteReport) -> String {
     md
 }
 
+/// Render a multi-vehicle report as a Markdown document.
+pub fn render_multi_vehicle_markdown(report: &MultiVehicleReport) -> String {
+    let mut md = String::new();
+
+    // Header
+    md.push_str(&format!("# Multi-Vehicle: {}\n\n", report.scenario_name));
+    if let Some(desc) = &report.scenario_description {
+        md.push_str(&format!("{}\n\n", desc));
+    }
+
+    // Summary
+    let overall = if report.all_passed {
+        "PASSED"
+    } else {
+        "FAILED"
+    };
+    md.push_str(&format!(
+        "**Result: {}** — {} vehicles\n\n",
+        overall,
+        report.vehicles.len()
+    ));
+
+    // Per-vehicle summary table
+    md.push_str("## Vehicle Summary\n\n");
+    md.push_str("| System ID | Result | Passed | Failed | Total |\n");
+    md.push_str("|-----------|--------|--------|--------|-------|\n");
+    for v in &report.vehicles {
+        let result = if v.report.passed { "PASS" } else { "FAIL" };
+        md.push_str(&format!(
+            "| {} | {} | {} | {} | {} |\n",
+            v.system_id, result, v.report.passed_count, v.report.failed_count, v.report.total,
+        ));
+    }
+    md.push('\n');
+
+    // Inter-vehicle assertions table
+    if !report.inter_vehicle_assertions.is_empty() {
+        md.push_str("## Inter-Vehicle Assertions\n\n");
+        md.push_str("| Status | Name | Details | Time |\n");
+        md.push_str("|--------|------|---------|------|\n");
+        for a in &report.inter_vehicle_assertions {
+            let icon = if a.passed { "PASS" } else { "FAIL" };
+            let time = a
+                .elapsed_secs
+                .map(|s| format!("{:.1}s", s))
+                .unwrap_or_else(|| "-".to_string());
+            md.push_str(&format!(
+                "| {} | {} | {} | {} |\n",
+                icon, a.name, a.reason, time
+            ));
+        }
+        md.push('\n');
+    }
+
+    // Per-vehicle details
+    md.push_str("## Per-Vehicle Details\n\n");
+    for v in &report.vehicles {
+        md.push_str(&format!(
+            "### Vehicle {} (system_id={})\n\n",
+            v.system_id, v.system_id
+        ));
+        md.push_str("| Status | Name | Details | Time |\n");
+        md.push_str("|--------|------|---------|------|\n");
+        for a in &v.report.assertions {
+            let icon = if a.passed { "PASS" } else { "FAIL" };
+            let time = a
+                .elapsed_secs
+                .map(|secs| format!("{:.1}s", secs))
+                .unwrap_or_else(|| "-".to_string());
+            md.push_str(&format!(
+                "| {} | {} | {} | {} |\n",
+                icon, a.name, a.reason, time
+            ));
+        }
+        md.push('\n');
+    }
+
+    md
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -159,6 +239,7 @@ mod tests {
         let report = Report {
             scenario_name: "Test scenario".to_string(),
             scenario_description: None,
+            fault_stats: None,
             faults: FaultSummary {
                 delay_ms: 0,
                 jitter_ms: 0,
@@ -199,10 +280,104 @@ mod tests {
         assert!(md.contains("## Telemetry"));
     }
 
+    fn sample_multi_vehicle_report() -> MultiVehicleReport {
+        let make_vehicle_report = |name: &str, sys_id: u8| Report {
+            scenario_name: name.to_string(),
+            scenario_description: None,
+            fault_stats: None,
+            faults: FaultSummary {
+                delay_ms: 0,
+                jitter_ms: 0,
+                loss_rate: 0.0,
+                burst_loss_length: 0,
+                duplicate_rate: 0.0,
+                replay_stale_ms: 0,
+            },
+            telemetry: TelemetrySummary {
+                position_samples: 40,
+                attitude_samples: 40,
+                status_samples: 4,
+                final_latitude: None,
+                final_longitude: None,
+                final_altitude: None,
+                total_flight_time_secs: Some(30.0),
+                path_length_m: 80.0,
+                max_path_deviation_m: None,
+            },
+            assertions: vec![AssertionReport {
+                name: format!("landed[v{}]", sys_id),
+                passed: true,
+                reason: "Confirmed".to_string(),
+                elapsed_secs: Some(30.0),
+            }],
+            passed: true,
+            total: 1,
+            passed_count: 1,
+            failed_count: 0,
+        };
+
+        MultiVehicleReport {
+            scenario_name: "Formation mission".to_string(),
+            scenario_description: Some("Multi-vehicle formation test".to_string()),
+            vehicles: vec![
+                VehicleReport {
+                    system_id: 1,
+                    report: make_vehicle_report("Formation mission", 1),
+                },
+                VehicleReport {
+                    system_id: 2,
+                    report: make_vehicle_report("Formation mission", 2),
+                },
+            ],
+            inter_vehicle_assertions: vec![AssertionReport {
+                name: "min_separation[50.0m]".to_string(),
+                passed: true,
+                reason: "All vehicle pairs maintained at least 50.0m separation".to_string(),
+                elapsed_secs: None,
+            }],
+            all_passed: true,
+        }
+    }
+
+    #[test]
+    fn multi_vehicle_markdown_contains_key_sections() {
+        let report = sample_multi_vehicle_report();
+        let md = render_multi_vehicle_markdown(&report);
+
+        // Must have a "Multi-Vehicle" header with the scenario name.
+        assert!(
+            md.contains("Multi-Vehicle"),
+            "markdown should contain 'Multi-Vehicle', got:\n{md}"
+        );
+        assert!(
+            md.contains("Formation mission"),
+            "markdown should contain the scenario name, got:\n{md}"
+        );
+
+        // Must mention both vehicle system IDs.
+        assert!(
+            md.contains('1') && md.contains('2'),
+            "markdown should contain vehicle system IDs 1 and 2"
+        );
+
+        // Must contain an inter-vehicle section.
+        assert!(
+            md.contains("Inter-Vehicle"),
+            "markdown should contain an inter-vehicle section, got:\n{md}"
+        );
+
+        // Must show the min_separation assertion result.
+        assert!(
+            md.contains("min_separation"),
+            "markdown should contain min_separation assertion, got:\n{md}"
+        );
+    }
+
     fn sample_suite_report() -> SuiteReport {
         let r1 = Report {
             scenario_name: "Alpha scenario".to_string(),
             scenario_description: None,
+            fault_stats: None,
             faults: FaultSummary {
                 delay_ms: 100,
                 jitter_ms: 0,
@@ -236,6 +411,7 @@ mod tests {
         let r2 = Report {
             scenario_name: "Beta scenario".to_string(),
             scenario_description: Some("Heavy loss test".to_string()),
+            fault_stats: None,
             faults: FaultSummary {
                 delay_ms: 0,
                 jitter_ms: 0,

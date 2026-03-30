@@ -2,8 +2,19 @@ use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use rand::Rng;
+use serde::Serialize;
 
 use crate::scenario::{FaultPhase, FaultProfile};
+
+/// Counters for fault pipeline activity.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct FaultStats {
+    pub packets_processed: u64,
+    pub packets_forwarded: u64,
+    pub packets_dropped: u64,
+    pub packets_duplicated: u64,
+    pub packets_replayed: u64,
+}
 
 /// What to do with a packet after passing through the fault pipeline.
 pub enum FaultAction {
@@ -30,6 +41,8 @@ pub struct FaultPipeline {
     replay_buffer: VecDeque<(Instant, Vec<u8>)>,
     /// When > 0, drop packets unconditionally (burst loss)
     pub burst_remaining: u32,
+    /// Running counters of pipeline activity
+    stats: FaultStats,
 }
 
 impl FaultPipeline {
@@ -41,6 +54,7 @@ impl FaultPipeline {
             start_time: Instant::now(),
             replay_buffer: VecDeque::with_capacity(100),
             burst_remaining: 0,
+            stats: FaultStats::default(),
         }
     }
 
@@ -58,6 +72,7 @@ impl FaultPipeline {
             start_time: Instant::now(),
             replay_buffer: VecDeque::with_capacity(100),
             burst_remaining: 0,
+            stats: FaultStats::default(),
         }
     }
 
@@ -85,6 +100,8 @@ impl FaultPipeline {
     /// - 1 action (normal forward)
     /// - 2+ actions (duplicated and/or replayed)
     pub fn process(&mut self, data: &[u8]) -> Vec<FaultAction> {
+        self.stats.packets_processed += 1;
+
         let profile = self.active_profile().clone();
         let mut rng = rand::rng();
 
@@ -98,6 +115,7 @@ impl FaultPipeline {
         // Stage 1: Burst drop — if in a burst, drop unconditionally
         if self.burst_remaining > 0 {
             self.burst_remaining -= 1;
+            self.stats.packets_dropped += 1;
             return vec![FaultAction::Drop];
         }
 
@@ -107,6 +125,7 @@ impl FaultPipeline {
             if profile.burst_loss_length > 1 {
                 self.burst_remaining = profile.burst_loss_length - 1;
             }
+            self.stats.packets_dropped += 1;
             return vec![FaultAction::Drop];
         }
 
@@ -126,6 +145,7 @@ impl FaultPipeline {
             data: data.to_vec(),
             delay: total_delay,
         });
+        self.stats.packets_forwarded += 1;
 
         // Stage 5: Duplicate check — send the packet a second time
         if profile.duplicate_rate > 0.0 && rng.random::<f64>() < profile.duplicate_rate {
@@ -138,6 +158,7 @@ impl FaultPipeline {
                 data: data.to_vec(),
                 delay: total_delay + dup_jitter,
             });
+            self.stats.packets_duplicated += 1;
         }
 
         // Stage 6: Replay stale — inject an old packet from N ms ago
@@ -154,6 +175,7 @@ impl FaultPipeline {
                     data: stale_data.clone(),
                     delay: total_delay,
                 });
+                self.stats.packets_replayed += 1;
             }
         }
 
@@ -170,6 +192,11 @@ impl FaultPipeline {
             || p.duplicate_rate > 0.0
             || p.replay_stale_ms > 0
             || !self.phases.is_empty()
+    }
+
+    /// Get a snapshot of the current statistics.
+    pub fn stats(&self) -> &FaultStats {
+        &self.stats
     }
 }
 
@@ -643,6 +670,90 @@ mod tests {
                 .iter()
                 .any(|a| matches!(a, FaultAction::Forward { .. })),
             "packet after phase expiry should be forwarded"
+        );
+    }
+
+    // --- Phase 5: stats tests ---
+
+    #[test]
+    fn stats_initial_all_zero() {
+        let pipeline = FaultPipeline::new(no_fault_profile());
+        let s = pipeline.stats();
+        assert_eq!(s.packets_processed, 0);
+        assert_eq!(s.packets_forwarded, 0);
+        assert_eq!(s.packets_dropped, 0);
+        assert_eq!(s.packets_duplicated, 0);
+        assert_eq!(s.packets_replayed, 0);
+    }
+
+    #[test]
+    fn stats_counts_forward() {
+        let mut pipeline = FaultPipeline::new(no_fault_profile());
+        for _ in 0..5 {
+            pipeline.process(b"pkt");
+        }
+        let s = pipeline.stats();
+        assert_eq!(s.packets_processed, 5);
+        assert_eq!(s.packets_forwarded, 5);
+        assert_eq!(s.packets_dropped, 0);
+    }
+
+    #[test]
+    fn stats_counts_drops() {
+        let mut profile = no_fault_profile();
+        profile.loss_rate = 1.0;
+        let mut pipeline = FaultPipeline::new(profile);
+        for _ in 0..3 {
+            pipeline.process(b"pkt");
+        }
+        let s = pipeline.stats();
+        assert_eq!(s.packets_dropped, 3);
+        assert_eq!(s.packets_forwarded, 0);
+    }
+
+    #[test]
+    fn stats_counts_duplicates() {
+        let mut profile = no_fault_profile();
+        profile.duplicate_rate = 1.0;
+        let mut pipeline = FaultPipeline::new(profile);
+        for _ in 0..2 {
+            pipeline.process(b"pkt");
+        }
+        let s = pipeline.stats();
+        assert_eq!(s.packets_duplicated, 2);
+    }
+
+    #[test]
+    fn stats_counts_combined() {
+        use std::thread;
+
+        let mut profile = no_fault_profile();
+        profile.loss_rate = 0.0;
+        profile.duplicate_rate = 1.0;
+        profile.replay_stale_ms = 1;
+        let mut pipeline = FaultPipeline::new(profile);
+
+        // Seed the replay buffer with a few packets, then wait so they become stale.
+        for _ in 0..3 {
+            pipeline.process(b"seed");
+        }
+        thread::sleep(Duration::from_millis(2));
+
+        // Process more packets — these should forward + duplicate, and may also replay.
+        for _ in 0..3 {
+            pipeline.process(b"pkt");
+        }
+
+        let s = pipeline.stats();
+        assert!(
+            s.packets_forwarded > 0,
+            "expected packets_forwarded > 0, got {}",
+            s.packets_forwarded
+        );
+        assert!(
+            s.packets_duplicated > 0,
+            "expected packets_duplicated > 0, got {}",
+            s.packets_duplicated
         );
     }
 }

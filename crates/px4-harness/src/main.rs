@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use px4_harness_core::assertion::engine::{evaluate_assertions, AssertionResult};
+use px4_harness_core::event::{EventKind, EventLog};
 use px4_harness_core::mavlink::connection::MavlinkConnection;
 use px4_harness_core::mission::controller::MissionController;
 use px4_harness_core::proxy::udp_proxy::UdpProxy;
@@ -47,6 +48,10 @@ struct Cli {
     /// Write JUnit XML report to this file
     #[arg(long)]
     junit: Option<PathBuf>,
+
+    /// Write event log to this JSON file
+    #[arg(long)]
+    event_log: Option<PathBuf>,
 }
 
 /// Run a single scenario end-to-end: start proxy, connect, execute mission, evaluate assertions.
@@ -198,8 +203,17 @@ async fn main() -> Result<()> {
             println!("  Loss rate: {:.0}%", scenario.faults.loss_rate * 100.0);
             println!("  Assertions: {}", scenario.assertions.len());
 
+            let event_log = Arc::new(EventLog::default());
+            event_log.record(EventKind::Info {
+                message: format!("Mission started: {}", scenario.scenario.name),
+            });
+
             let (store, results) =
                 run_single_scenario(&scenario, cli.px4_port, cli.proxy_port, cli.verbose).await?;
+
+            event_log.record(EventKind::Info {
+                message: "Mission completed".to_string(),
+            });
 
             // Print telemetry summary.
             {
@@ -243,6 +257,11 @@ async fn main() -> Result<()> {
                 std::fs::write(path, junit::render_junit(&report))
                     .with_context(|| format!("failed to write JUnit XML to {}", path.display()))?;
                 println!("JUnit XML report written to {}", path.display());
+            }
+            if let Some(path) = &cli.event_log {
+                std::fs::write(path, event_log.to_json())
+                    .with_context(|| format!("failed to write event log to {}", path.display()))?;
+                println!("Event log written to {}", path.display());
             }
 
             if report.failed_count > 0 {

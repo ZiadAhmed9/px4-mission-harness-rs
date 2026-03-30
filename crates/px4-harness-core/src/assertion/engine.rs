@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::mission::controller::MissionController;
@@ -87,8 +89,135 @@ pub fn evaluate_assertions(
                 max_speed_ms,
                 timeout_secs,
             } => check_max_ground_speed(store, *max_speed_ms, *timeout_secs),
+
+            // MinSeparation is an inter-vehicle assertion — it cannot be evaluated against
+            // a single vehicle's telemetry store. Skip it here; it is handled by
+            // evaluate_multi_vehicle_assertions.
+            Assertion::MinSeparation { .. } => AssertionResult {
+                name: "min_separation".to_string(),
+                passed: false,
+                reason: "MinSeparation is an inter-vehicle assertion and cannot be evaluated \
+                         against a single telemetry store"
+                    .to_string(),
+                elapsed: None,
+            },
         })
         .collect()
+}
+
+/// Evaluate inter-vehicle assertions that compare telemetry across vehicles.
+/// `stores` maps system_id to its TelemetryStore.
+pub fn evaluate_multi_vehicle_assertions(
+    assertions: &[Assertion],
+    stores: &HashMap<u8, Arc<TelemetryStore>>,
+) -> Vec<AssertionResult> {
+    assertions
+        .iter()
+        .filter_map(|assertion| match assertion {
+            Assertion::MinSeparation {
+                min_distance_m,
+                timeout_secs,
+            } => Some(check_min_separation(stores, *min_distance_m, *timeout_secs)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Check that all vehicle pairs maintained at least `min_distance_m` separation at all times.
+///
+/// For each position sample from vehicle A, finds the nearest-timestamp sample from vehicle B
+/// and computes the haversine distance. Fails if any pair is closer than `min_distance_m`.
+fn check_min_separation(
+    stores: &HashMap<u8, Arc<TelemetryStore>>,
+    min_distance_m: f64,
+    timeout_secs: u64,
+) -> AssertionResult {
+    let name = format!("min_separation[{:.1}m]", min_distance_m);
+    let timeout = Duration::from_secs(timeout_secs);
+
+    // Collect (system_id, positions) pairs for all vehicles that have data.
+    let vehicle_ids: Vec<u8> = stores.keys().copied().collect();
+
+    if vehicle_ids.len() < 2 {
+        return AssertionResult {
+            name,
+            passed: true,
+            reason: "fewer than two vehicles with telemetry — separation check skipped".to_string(),
+            elapsed: None,
+        };
+    }
+
+    // Check each unique pair.
+    for i in 0..vehicle_ids.len() {
+        for j in (i + 1)..vehicle_ids.len() {
+            let id_a = vehicle_ids[i];
+            let id_b = vehicle_ids[j];
+
+            let store_a = &stores[&id_a];
+            let store_b = &stores[&id_b];
+
+            let positions_a = store_a.positions.lock().unwrap();
+            let positions_b = store_b.positions.lock().unwrap();
+
+            if positions_a.is_empty() || positions_b.is_empty() {
+                continue;
+            }
+
+            let mission_start = store_a.mission_start;
+
+            for pos_a in positions_a.iter() {
+                let elapsed = pos_a.timestamp.duration_since(mission_start);
+                if elapsed > timeout {
+                    break;
+                }
+
+                // Find the position sample from vehicle B with the closest timestamp.
+                let nearest_b = positions_b.iter().min_by_key(|pos_b| {
+                    if pos_b.timestamp > pos_a.timestamp {
+                        pos_b.timestamp.duration_since(pos_a.timestamp)
+                    } else {
+                        pos_a.timestamp.duration_since(pos_b.timestamp)
+                    }
+                });
+
+                if let Some(pos_b) = nearest_b {
+                    let distance = MissionController::haversine_distance(
+                        pos_a.latitude,
+                        pos_a.longitude,
+                        pos_b.latitude,
+                        pos_b.longitude,
+                    );
+
+                    if distance < min_distance_m {
+                        return AssertionResult {
+                            name,
+                            passed: false,
+                            reason: format!(
+                                "Vehicles {} and {} were {:.1}m apart at {:.1}s \
+                                 (min required: {:.1}m)",
+                                id_a,
+                                id_b,
+                                distance,
+                                elapsed.as_secs_f64(),
+                                min_distance_m,
+                            ),
+                            elapsed: None,
+                        };
+                    }
+                }
+            }
+        }
+    }
+
+    AssertionResult {
+        name,
+        passed: true,
+        reason: format!(
+            "All vehicle pairs maintained at least {:.1}m separation",
+            min_distance_m
+        ),
+        elapsed: None,
+    }
 }
 
 /// Check if the drone reached a waypoint within the acceptance radius before the timeout.
@@ -551,6 +680,7 @@ fn check_max_ground_speed(
 mod tests {
     use super::*;
     use crate::telemetry::store::*;
+    use std::sync::Arc;
 
     /// Helper: create a TelemetryStore with fake position samples.
     /// Each tuple is (lat, lon, relative_alt, milliseconds_from_start).
@@ -922,6 +1052,107 @@ mod tests {
             result.passed,
             "vz should not count toward ground speed: {}",
             result.reason
+        );
+    }
+
+    // --- multi-vehicle / min_separation tests ---
+
+    /// Build a HashMap<u8, Arc<TelemetryStore>> from a list of (system_id, positions) pairs.
+    /// Positions format: (lat, lon, relative_alt, milliseconds_from_start).
+    fn make_multi_vehicle_stores(
+        vehicles: Vec<(u8, Vec<(f64, f64, f64, u64)>)>,
+    ) -> HashMap<u8, Arc<TelemetryStore>> {
+        let mut stores = HashMap::new();
+        for (sys_id, positions) in vehicles {
+            let store = Arc::new(make_store_with_positions(positions));
+            stores.insert(sys_id, store);
+        }
+        stores
+    }
+
+    /// Vehicle 1: lat=47.397742, lon=8.545594 (Zurich area)
+    /// Vehicle 2: lat=47.398742, lon=8.545594 (~111m north)
+    /// Both sampled at 5s. min_distance_m=30.0 — PASS.
+    #[test]
+    fn min_separation_pass() {
+        let stores = make_multi_vehicle_stores(vec![
+            (1, vec![(47.397742, 8.545594, 10.0, 5_000)]),
+            (2, vec![(47.398742, 8.545594, 10.0, 5_000)]),
+        ]);
+        let assertions = vec![crate::scenario::Assertion::MinSeparation {
+            min_distance_m: 30.0,
+            timeout_secs: 60,
+        }];
+        let results = evaluate_multi_vehicle_assertions(&assertions, &stores);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].passed, "expected pass: {}", results[0].reason);
+    }
+
+    /// Vehicle 1: lat=47.397742, lon=8.545594
+    /// Vehicle 2: lat=47.397742, lon=8.545604 (very close, ~1m east)
+    /// min_distance_m=30.0 — FAIL.
+    #[test]
+    fn min_separation_fail_too_close() {
+        let stores = make_multi_vehicle_stores(vec![
+            (1, vec![(47.397742, 8.545594, 10.0, 5_000)]),
+            (2, vec![(47.397742, 8.545604, 10.0, 5_000)]),
+        ]);
+        let assertions = vec![crate::scenario::Assertion::MinSeparation {
+            min_distance_m: 30.0,
+            timeout_secs: 60,
+        }];
+        let results = evaluate_multi_vehicle_assertions(&assertions, &stores);
+        assert_eq!(results.len(), 1);
+        assert!(!results[0].passed, "expected fail: {}", results[0].reason);
+    }
+
+    /// Only one vehicle has position data; separation check is skipped — PASS.
+    #[test]
+    fn min_separation_one_vehicle_no_data() {
+        // Vehicle 1 has positions; vehicle 2 has none.
+        let store1 = Arc::new(make_store_with_positions(vec![(
+            47.397742, 8.545594, 10.0, 5_000,
+        )]));
+        let store2 = Arc::new(TelemetryStore::new()); // empty
+        let mut stores = HashMap::new();
+        stores.insert(1u8, store1);
+        stores.insert(2u8, store2);
+
+        let assertions = vec![crate::scenario::Assertion::MinSeparation {
+            min_distance_m: 30.0,
+            timeout_secs: 60,
+        }];
+        let results = evaluate_multi_vehicle_assertions(&assertions, &stores);
+        assert_eq!(results.len(), 1);
+        // The implementation skips pairs where either store is empty, so the assertion passes.
+        assert!(
+            results[0].passed,
+            "single vehicle with data should not trigger a separation violation: {}",
+            results[0].reason
+        );
+    }
+
+    /// Three vehicles: V1 and V2 are far apart (~111m), but V1 and V3 are very close (~1m).
+    /// min_distance_m=30.0 — FAIL because the V1/V3 pair violates the constraint.
+    #[test]
+    fn min_separation_three_vehicles() {
+        let stores = make_multi_vehicle_stores(vec![
+            (1, vec![(47.397742, 8.545594, 10.0, 5_000)]),
+            // V2 is ~111m north of V1 — compliant
+            (2, vec![(47.398742, 8.545594, 10.0, 5_000)]),
+            // V3 is ~1m east of V1 — violation
+            (3, vec![(47.397742, 8.545604, 10.0, 5_000)]),
+        ]);
+        let assertions = vec![crate::scenario::Assertion::MinSeparation {
+            min_distance_m: 30.0,
+            timeout_secs: 60,
+        }];
+        let results = evaluate_multi_vehicle_assertions(&assertions, &stores);
+        assert_eq!(results.len(), 1);
+        assert!(
+            !results[0].passed,
+            "one pair too close should cause failure: {}",
+            results[0].reason
         );
     }
 }

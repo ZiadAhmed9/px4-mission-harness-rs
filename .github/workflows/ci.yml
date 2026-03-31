@@ -48,3 +48,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-tarpaulin
+      - run: cargo tarpaulin --workspace --out lcov --output-dir coverage
+      - uses: codecov/codecov-action@v4
+        with:
+          files: coverage/lcov.info

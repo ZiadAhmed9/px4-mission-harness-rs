@@ -1,6 +1,7 @@
 # PX4 Mission Resilience Test Harness
 
 [![CI](https://github.com/ZiadAhmed9/px4-mission-harness-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/ZiadAhmed9/px4-mission-harness-rs/actions)
+[![codecov](https://codecov.io/gh/ZiadAhmed9/px4-mission-harness-rs/branch/master/graph/badge.svg)](https://codecov.io/gh/ZiadAhmed9/px4-mission-harness-rs)
 
 A Rust-based CLI tool for deterministic, repeatable testing of PX4 drone missions under degraded communication and timing conditions.
 

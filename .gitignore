@@ -17,12 +17,12 @@ Thumbs.db
 # Documentation (kept locally, not tracked)
 Documentation/
 
-# Claude Code
-CLAUDE.md
-.claude/
-
 # Asciinema recordings
 *.cast
+
+# Local tool config
+CLAUDE.md
+.claude/
 
 # Generated reports
 report*.json

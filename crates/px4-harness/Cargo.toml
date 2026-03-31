@@ -2,6 +2,11 @@
 name = "px4-harness"
 version = "0.1.0"
 edition = "2021"
+description = "CLI tool for deterministic resilience testing of PX4 drone missions under degraded communication"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/ZiadAhmed9/px4-mission-harness-rs"
+keywords = ["px4", "drone", "mavlink", "testing", "fault-injection"]
+categories = ["command-line-utilities", "aerospace::protocols"]
 
 [dependencies]
 px4-harness-core = { path = "../px4-harness-core"} # Dependency on the core library crate

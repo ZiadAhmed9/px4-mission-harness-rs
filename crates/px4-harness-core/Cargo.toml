@@ -1,7 +1,12 @@
 [package]
 name = "px4-harness-core"
 version = "0.1.0"
-edition = "2021" # Rust edition — controls language features available
+edition = "2021"
+description = "Core library for deterministic resilience testing of PX4 drone missions under degraded communication"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/ZiadAhmed9/px4-mission-harness-rs"
+keywords = ["px4", "drone", "mavlink", "testing", "fault-injection"]
+categories = ["development-tools::testing", "aerospace::protocols"]
 
 [dependencies] #Each dependency is a crate that this crate relies on
 tokio = {version = "1", features = ["full"]} # Async runtime for Rust

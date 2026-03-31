@@ -1,4 +1,4 @@
-//Rust structs that mirror the TOML format. Serde will automatically convert between TOML and these types.
+//! Scenario definition: TOML-backed structs for mission parameters, fault profiles, and assertions.
 
 use crate::error::HarnessError;
 use serde::{Deserialize, Serialize};

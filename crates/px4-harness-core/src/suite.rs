@@ -1,3 +1,5 @@
+//! Suite runner: loads and groups multiple scenario files for batch execution.
+
 use crate::error::HarnessError;
 use crate::scenario::ScenarioFile;
 use serde::Deserialize;

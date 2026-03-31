@@ -1,5 +1,6 @@
-// library crates define typed errors so callers can handle each case.
-use thiserror::Error; // Import the thiserror crate for easy error handling
+//! Typed error enum for all harness failure modes.
+
+use thiserror::Error;
 
 #[derive(Debug, Error)] // Derive the Error and Debug traits for the HarnessError enum
 pub enum HarnessError {

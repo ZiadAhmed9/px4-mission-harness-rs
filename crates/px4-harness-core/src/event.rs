@@ -1,3 +1,5 @@
+//! Timestamped event log used to record mission and fault activity during a run.
+
 use serde::Serialize;
 use std::sync::Mutex;
 use std::time::Instant;
